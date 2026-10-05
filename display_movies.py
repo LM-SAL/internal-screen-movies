@@ -1,5 +1,7 @@
 """Build a balanced movie playlist and play it in VLC."""
 
+from __future__ import annotations
+
 import logging
 import random
 import shutil

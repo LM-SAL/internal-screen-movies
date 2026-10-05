@@ -2,7 +2,7 @@
 
 Play IRIS and SDO/AIA movies from mounted network shares. Configure directories and
 filename patterns in `config.py` (`SOURCES`); set a directory to `None` to disable it.
-Requires Python 3.10+ and VLC for playback. No extra Python packages are needed.
+Requires Python 3.9+ and VLC for playback. No extra Python packages are needed.
 
     python display_movies.py
 
