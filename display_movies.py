@@ -1,15 +1,13 @@
-"""Build a balanced movie playlist and play it in VLC."""
+"""Build a balanced, shuffled M3U movie playlist."""
 
 from __future__ import annotations
 
 import logging
 import random
-import shutil
-import subprocess
 import threading
 from pathlib import Path
 
-from config import SOURCES, VLC
+from config import SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +15,6 @@ HERE = Path(__file__).resolve().parent
 PLAYLIST = HERE / "playlist.m3u"
 # A stale network mount blocks forever on stat, so the mount check gives up.
 MOUNT_CHECK_TIMEOUT = 30.0
-
-
-def check_everything_is_installed() -> None:
-    """Check that VLC is installed."""
-    if shutil.which(VLC) is None:
-        msg = f"Error: {VLC} is not installed."
-        raise FileNotFoundError(msg)
 
 
 def mount_problem(directory: Path, timeout: float = MOUNT_CHECK_TIMEOUT) -> str | None:
@@ -84,17 +75,28 @@ def get_paths_for_movies(base_path: Path, filename: str, *, prefer_encoded: bool
     return list(seen.values())
 
 
-def balance(sources: list[list[str]]) -> list[str]:
-    """Repeat sources to give each roughly equal representation in the playlist."""
-    if not sources:
-        msg = "No sources to build a playlist from."
+def shuffled_cycle(movies: list[str], count: int) -> list[str]:
+    """Return ``count`` movies, reshuffled each pass so every movie plays once before any repeats."""
+    playlist: list[str] = []
+    while len(playlist) < count:
+        batch = random.sample(movies, len(movies))
+        # Redraw so a pass never starts with the movie the previous pass ended on.
+        while len(movies) > 1 and playlist and batch[0] == playlist[-1]:
+            batch = random.sample(movies, len(movies))
+        playlist.extend(batch)
+    return playlist[:count]
+
+
+def spread(sources: list[list[str]]) -> list[str]:
+    """Give each source one slot per round, in random order within the round."""
+    if not sources or not all(sources):
+        msg = "Every source needs at least one movie."
         raise ValueError(msg)
-    target = max(len(source) for source in sources)
-    movies = []
-    for source in sources:
-        if source:
-            movies.extend(source * max(1, round(target / len(source))))
-    return movies
+    rounds = max(len(source) for source in sources)
+    playlist = []
+    for round_movies in zip(*(shuffled_cycle(source, rounds) for source in sources)):
+        playlist.extend(random.sample(round_movies, len(round_movies)))
+    return playlist
 
 
 def create_playlist(movies: list[str]) -> None:
@@ -103,22 +105,8 @@ def create_playlist(movies: list[str]) -> None:
     PLAYLIST.write_text("#EXTM3U\n" + "".join(f"{path}\n" for path in movies), encoding="utf-8")
 
 
-def play_movies() -> None:
-    """Play in VLC; report failures but allow termination by a signal."""
-    vlc = subprocess.run(  # NOQA: S603
-        [VLC, "--rate", "0.5", "--fullscreen", "--loop", str(PLAYLIST)],
-        check=False,
-    )
-    if vlc.returncode < 0:
-        logger.info("VLC was stopped by signal %d", -vlc.returncode)
-        return
-    if vlc.returncode != 0:
-        raise subprocess.CalledProcessError(vlc.returncode, vlc.args)
-
-
-def run_playlist() -> None:
-    """Find movies, write the playlist and start VLC."""
-    check_everything_is_installed()
+def build_playlist() -> None:
+    """Find movies and write the playlist."""
     check_directories_mounted()
     sources = []
     for base_path, filename_pattern, prefer_encoded in SOURCES:
@@ -131,12 +119,9 @@ def run_playlist() -> None:
             raise FileNotFoundError(msg)
         logger.info("Found %d movies in %s", len(found), base_path)
         sources.append(found)
-    movies = balance(sources)
-    random.shuffle(movies)
-    create_playlist(movies)
-    play_movies()
+    create_playlist(spread(sources))
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    run_playlist()
+    build_playlist()
